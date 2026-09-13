@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>synth_dashboard</title>
+    <script type="module" crossorigin>(function(){let e=document.createElement(`link`).relList;if(e&&e.supports&&e.supports(`modulepreload`))return;for(let e of document.querySelectorAll(`link[rel="modulepreload"]`))n(e);new MutationObserver(e=>{for(let t of e)if(t.type===`childList`)for(let e of t.addedNodes)e.tagName===`LINK`&&e.rel===`modulepreload`&&n(e)}).observe(document,{childList:!0,subtree:!0});function t(e){let t={};return e.integrity&&(t.integrity=e.integrity),e.referrerPolicy&&(t.referrerPolicy=e.referrerPolicy),t.credentials=e.crossOrigin===`use-credentials`?`include`:e.crossOrigin===`anonymous`?`omit`:`same-origin`,t}function n(e){if(e.ep)return;e.ep=!0;let n=t(e);fetch(e.href,n)}})();var e={telemetry:{cutoff:0,res:0,menuPage:0,midiSource:0,currentStep:0}},t=class{ws=null;host;constructor(e){this.host=e}connect(){this.ws=new WebSocket(`ws://${this.host}:81`),this.ws.onopen=()=>{console.log(`[WS] Connected to CORE II`),this.updateStatus(!0)},this.ws.onclose=()=>{console.log(`[WS] Offline. Retrying in 2 seconds...`),this.updateStatus(!1),setTimeout(()=>this.connect(),2e3)},this.ws.onmessage=t=>{try{let n=JSON.parse(t.data);n.type===`telemetry`?Object.assign(e.telemetry,n):n.type===`manifest`&&console.log(`[WS] Manifest received:`,n.data)}catch(e){console.error(`[WS] JSON Parse Error:`,e)}}}sendCommand(e){this.ws&&this.ws.readyState===WebSocket.OPEN&&this.ws.send(JSON.stringify(e))}updateStatus(e){let t=document.getElementById(`ws-status`);t&&(t.textContent=e?`Status: Linked`:`Status: Offline`,t.style.color=e?`#4ade80`:`#f87171`)}},n=class{network;container;numSteps=64;stepsPerBeat=4;beatsPerBar=4;minPitch=24;maxPitch=107;cellW=32;cellH=16;keyW=60;maxPolyphony=6;notes=[];scaleIntervals=[0,2,4,5,7,9,11];rootNote=0;mode=`draw`;dragTarget=null;dragAction=null;dragStartStep=0;dragStartPitch=0;originalNoteState=null;canvas;ctx;keysCanvas;keysCtx;playhead;viewport;innerWrapper;totalH;constructor(e,t){this.network=e,this.container=document.getElementById(t),this.buildUI(),this.bindEvents(),this.scaleCanvases(),this.drawKeys(),this.drawGrid()}buildUI(){let e=this.numSteps*this.cellW;this.totalH=(this.maxPitch-this.minPitch+1)*this.cellH;let t=`background: var(--bg-input); color: var(--text-main); border: 1px solid var(--border-dim); padding: 6px 12px; border-radius: 4px; font-family: monospace; font-size: 11px; text-transform: uppercase; cursor: pointer;`;this.container.innerHTML=`
+            <div class="module-box" style="border: none; border-radius: 0; padding: 15px;">
+                <div style="display: flex; gap: 12px; margin-bottom: 15px; align-items: center; flex-wrap: wrap;">
+                    <button id="seq-play" style="${t}">Play</button>
+                    <button id="seq-pause" style="${t}">Pause</button>
+                    <button id="seq-restart" style="${t}">Restart</button>
+                    
+                    <div style="border-left: 1px solid var(--border-dim); height: 20px;"></div>
+                    
+                    <label style="color: var(--text-dim); font-size: 12px;">BPM: 
+                        <input type="number" id="seq-bpm" value="120" style="width: 55px; background: var(--bg-input); color: var(--text-main); border: 1px solid var(--border-dim); padding: 4px; border-radius: 4px;">
+                    </label>
+
+                    <label style="color: var(--text-dim); font-size: 12px;">Length: 
+                        <input type="number" id="seq-len" value="${this.numSteps}" step="16" min="16" max="1024" style="width: 55px; background: var(--bg-input); color: var(--text-main); border: 1px solid var(--border-dim); padding: 4px; border-radius: 4px;">
+                    </label>
+
+                    <div style="border-left: 1px solid var(--border-dim); height: 20px;"></div>
+                    
+                    <select id="seq-root" style="width: auto;">
+                        ${[`C`,`C#`,`D`,`D#`,`E`,`F`,`F#`,`G`,`G#`,`A`,`A#`,`B`].map((e,t)=>`<option value="${t}">${e}</option>`).join(``)}
+                    </select>
+                    
+                    <select id="seq-scale" style="width: auto;">
+                        <option value="0,2,4,5,7,9,11">Major</option>
+                        <option value="0,2,3,5,7,8,10">Natural Minor</option>
+                        <option value="0,2,3,5,7,9,10">Dorian</option>
+                        <option value="0,1,3,5,7,8,10">Phrygian</option>
+                        <option value="0,3,5,6,7,10">Blues</option>
+                        <option value="0,1,2,3,4,5,6,7,8,9,10,11">Chromatic</option>
+                    </select>
+                    
+                    <div style="border-left: 1px solid var(--border-dim); height: 20px;"></div>
+                    
+                    <button id="seq-mode" style="${t} border-color: var(--neon-cyan); color: var(--neon-cyan);">Mode: Draw</button>
+                </div>
+                
+                \x3C!-- VIEWPORT -->
+                <div id="seq-viewport" style="width: 100%; height: 400px; overflow: auto; background: var(--bg-input); border: 1px solid var(--border-dim); border-radius: 4px;">
+                    <div id="seq-inner" style="position: relative; width: ${this.keyW+e}px; height: ${this.totalH}px;">
+                        
+                        \x3C!-- STICKY PIANO KEYS -->
+                        <div style="position: sticky; left: 0; top: 0; width: ${this.keyW}px; height: ${this.totalH}px; z-index: 20; box-shadow: 2px 0 8px rgba(0,0,0,0.8); float: left;">
+                            <canvas id="seq-keys" style="display: block;"></canvas>
+                        </div>
+                        
+                        \x3C!-- GRID WRAPPER -->
+                        <div id="seq-grid-wrapper" style="position: absolute; left: ${this.keyW}px; top: 0; width: ${e}px; height: ${this.totalH}px;">
+                            \x3C!-- PLAYHEAD FIXED TO TOTAL HEIGHT -->
+                            <div id="seq-playhead" style="position: absolute; top: 0; height: ${this.totalH}px; left: 0; width: 2px; background: var(--neon-green); z-index: 10; pointer-events: none; box-shadow: 0 0 10px var(--neon-green);"></div>
+                            <canvas id="seq-canvas" style="display: block; cursor: crosshair; touch-action: none;"></canvas>
+                        </div>
+                        
+                    </div>
+                </div>
+            </div>
+        `,this.canvas=document.getElementById(`seq-canvas`),this.ctx=this.canvas.getContext(`2d`),this.keysCanvas=document.getElementById(`seq-keys`),this.keysCtx=this.keysCanvas.getContext(`2d`),this.playhead=document.getElementById(`seq-playhead`),this.viewport=document.getElementById(`seq-viewport`),this.innerWrapper=document.getElementById(`seq-inner`),this.viewport.scrollTop=(this.maxPitch-60)*this.cellH-this.viewport.clientHeight/2}scaleCanvases(){let e=window.devicePixelRatio||1,t=this.numSteps*this.cellW;this.canvas.width=t*e,this.canvas.height=this.totalH*e,this.canvas.style.width=`${t}px`,this.canvas.style.height=`${this.totalH}px`,this.ctx.scale(e,e),this.keysCanvas.width=this.keyW*e,this.keysCanvas.height=this.totalH*e,this.keysCanvas.style.width=`${this.keyW}px`,this.keysCanvas.style.height=`${this.totalH}px`,this.keysCtx.scale(e,e)}drawKeys(){let e=this.keysCtx;e.clearRect(0,0,this.keyW,this.totalH),e.textAlign=`right`,e.textBaseline=`middle`,e.font=`10px monospace`;let t=[`C`,`C#`,`D`,`D#`,`E`,`F`,`F#`,`G`,`G#`,`A`,`A#`,`B`];for(let n=this.maxPitch;n>=this.minPitch;n--){let r=(this.maxPitch-n)*this.cellH,i=n%12,a=[1,3,6,8,10].includes(i),o=Math.floor(n/12)-1,s=`${t[i]}${o}`;a?(e.fillStyle=`#090d16`,e.fillRect(0,r,this.keyW,this.cellH),e.strokeStyle=`#020408`,e.strokeRect(0,r,this.keyW,this.cellH),e.fillStyle=`#475569`,e.fillText(s,this.keyW-8,r+this.cellH/2)):(e.fillStyle=i===0?`#cbd5e1`:`#e2e8f0`,e.fillRect(0,r,this.keyW,this.cellH),e.strokeStyle=`#94a3b8`,e.strokeRect(0,r,this.keyW,this.cellH),e.fillStyle=i===0?`#0f172a`:`#334155`,e.fillText(s,this.keyW-8,r+this.cellH/2))}}drawGrid(){let e=this.ctx,t=this.numSteps*this.cellW;e.clearRect(0,0,t,this.totalH);for(let n=this.maxPitch;n>=this.minPitch;n--){let r=(this.maxPitch-n)*this.cellH,i=n%12,a=i===this.rootNote,o=(i-this.rootNote+12)%12,s=this.scaleIntervals.includes(o),c=[1,3,6,8,10].includes(i);e.fillStyle=a?`rgba(0, 240, 255, 0.08)`:s?c?`#080c16`:`#0d1220`:`#04060d`,e.fillRect(0,r,t,this.cellH),e.strokeStyle=`rgba(255, 255, 255, 0.03)`,e.beginPath(),e.moveTo(0,r),e.lineTo(t,r),e.stroke()}for(let t=0;t<=this.numSteps;t++){let n=t*this.cellW,r=t%(this.stepsPerBeat*this.beatsPerBar)===0,i=t%this.stepsPerBeat===0;r?(e.strokeStyle=`rgba(255, 255, 255, 0.15)`,e.lineWidth=2):i?(e.strokeStyle=`rgba(255, 255, 255, 0.08)`,e.lineWidth=1):(e.strokeStyle=`rgba(255, 255, 255, 0.02)`,e.lineWidth=1),e.beginPath(),e.moveTo(n,0),e.lineTo(n,this.totalH),e.stroke()}this.notes.forEach(t=>{let n=t.step*this.cellW,r=(this.maxPitch-t.pitch)*this.cellH,i=t.len*this.cellW;e.shadowBlur=12,e.shadowColor=`var(--neon-cyan)`,e.fillStyle=`var(--neon-cyan)`,e.fillRect(n+1,r+1,i-2,this.cellH-2),e.shadowBlur=0,e.fillStyle=`#ffffff`,e.fillRect(n+i-6,r+1,4,this.cellH-2)})}bindEvents(){document.getElementById(`seq-play`)?.addEventListener(`click`,()=>this.network.sendCommand({type:`seqCtrl`,cmd:`play`})),document.getElementById(`seq-pause`)?.addEventListener(`click`,()=>this.network.sendCommand({type:`seqCtrl`,cmd:`pause`})),document.getElementById(`seq-restart`)?.addEventListener(`click`,()=>this.network.sendCommand({type:`seqCtrl`,cmd:`restart`})),document.getElementById(`seq-bpm`)?.addEventListener(`change`,e=>this.network.sendCommand({type:`bpm`,val:parseInt(e.target.value)}));let e=document.getElementById(`seq-mode`);e.addEventListener(`click`,()=>{this.mode=this.mode===`draw`?`erase`:`draw`,e.textContent=`Mode: ${this.mode===`draw`?`Draw`:`Erase`}`,e.style.color=this.mode===`draw`?`var(--neon-cyan)`:`var(--neon-pink)`,e.style.borderColor=this.mode===`draw`?`var(--neon-cyan)`:`var(--neon-pink)`}),document.getElementById(`seq-root`)?.addEventListener(`change`,e=>{this.rootNote=parseInt(e.target.value),this.drawGrid()}),document.getElementById(`seq-scale`)?.addEventListener(`change`,e=>{this.scaleIntervals=e.target.value.split(`,`).map(Number),this.drawGrid()}),document.getElementById(`seq-len`)?.addEventListener(`change`,e=>{this.numSteps=parseInt(e.target.value);let t=this.numSteps*this.cellW;document.getElementById(`seq-grid-wrapper`).style.width=`${t}px`,this.innerWrapper.style.width=`${this.keyW+t}px`,this.scaleCanvases(),this.drawGrid(),this.compileAndSend()}),this.canvas.addEventListener(`contextmenu`,e=>e.preventDefault());let t=e=>{let t=this.canvas.getBoundingClientRect(),n,r;if(`touches`in e){if(e.touches.length>0)n=e.touches[0].clientX,r=e.touches[0].clientY;else if(e.changedTouches.length>0)n=e.changedTouches[0].clientX,r=e.changedTouches[0].clientY;else return null}else n=e.clientX,r=e.clientY;let i=n-t.left,a=r-t.top;return{x:i,y:a,step:Math.floor(i/this.cellW),pitch:this.maxPitch-Math.floor(a/this.cellH)}},n=e=>{let n=t(e);if(!n)return;let{x:r,step:i,pitch:a}=n,o=`button`in e&&e.button===2||this.mode===`erase`,s=this.notes.findIndex(e=>a===e.pitch&&i>=e.step&&i<e.step+e.len);if(s>-1){let t=this.notes[s];if(o){this.notes.splice(s,1),this.drawGrid(),this.compileAndSend();return}e.preventDefault(),this.dragTarget=t,this.originalNoteState={...t},r>=(t.step+t.len)*this.cellW-12?this.dragAction=`resize`:(this.dragAction=`move`,this.dragStartStep=i,this.dragStartPitch=a)}else if(!o){if(this.notes.filter(e=>i>=e.step&&i<e.step+e.len).length>=this.maxPolyphony)return;e.preventDefault();let t={step:i,pitch:a,len:1};this.notes.push(t),this.dragTarget=t,this.dragAction=`resize`,this.drawGrid()}},r=e=>{if(!this.dragTarget||!this.dragAction)return;e.preventDefault();let n=t(e);if(!n)return;let{step:r,pitch:i}=n,a=!1;if(this.dragAction===`resize`){let e=Math.max(1,r-this.dragTarget.step+1);e!==this.dragTarget.len&&(this.dragTarget.len=e,a=!0)}else if(this.dragAction===`move`&&this.originalNoteState){let e=r-this.dragStartStep,t=i-this.dragStartPitch,n=Math.max(0,Math.min(this.numSteps-1,this.originalNoteState.step+e)),o=Math.max(this.minPitch,Math.min(this.maxPitch,this.originalNoteState.pitch+t));(n!==this.dragTarget.step||o!==this.dragTarget.pitch)&&(this.dragTarget.step=n,this.dragTarget.pitch=o,a=!0)}a&&this.drawGrid()},i=()=>{this.dragTarget&&(this.dragTarget=null,this.dragAction=null,this.compileAndSend())};this.canvas.addEventListener(`mousedown`,n),window.addEventListener(`mousemove`,r),window.addEventListener(`mouseup`,i),this.canvas.addEventListener(`touchstart`,n,{passive:!1}),window.addEventListener(`touchmove`,r,{passive:!1}),window.addEventListener(`touchend`,i)}compileAndSend(){let e=Array(this.numSteps).fill(null).map(()=>[]);this.notes.forEach(t=>{t.step<this.numSteps&&e[t.step].push({n:t.pitch,l:t.len})}),this.network.sendCommand({type:`sequence`,numSteps:this.numSteps,stepsPerBeat:this.stepsPerBeat,beatsPerBar:this.beatsPerBar,steps:e})}updatePlayhead(e){e>=0&&e<this.numSteps&&(this.playhead.style.transform=`translateX(${e*this.cellW}px)`)}};function r(e,t){return t.innerHTML=`
+        <div style="max-width: 1200px; margin: 0 auto; padding: 40px 20px;">
+            <div style="display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 30px; border-bottom: 2px solid var(--border-dim); padding-bottom: 10px;">
+                <h1 style="margin: 0; font-size: 28px; letter-spacing: 4px; color: var(--text-main);">CORE II <span style="color: var(--neon-cyan);">VIRTUAL RIG</span></h1>
+                <h3 id="ws-status" style="margin: 0; font-size: 14px; color: var(--neon-pink); text-transform: uppercase;">Status: Offline</h3>
+            </div>
+
+            \x3C!-- GLOBALS -->
+            <div class="module-box" style="margin-bottom: 20px;">
+                <h3 class="module-title">System Globals</h3>
+                <div style="display: flex; gap: 20px; align-items: center;">
+                    <div>
+                        <label style="font-size: 12px; color: var(--text-dim);">MIDI Source</label>
+                        <select id="ctrl-midiSource" style="width: 170px; display: block; margin-top: 5px;">
+                            <option value="0">Web Sequencer</option>
+                            <option value="1">USB MIDI Keyboard</option>
+                        </select>
+                    </div>
+                    <div style="flex: 1; text-align: right;">
+                        <div style="font-size: 12px; color: var(--text-dim);">Current ESP32 Menu Page</div>
+                        <div id="tel-menuPage" style="font-size: 24px; color: var(--neon-green); font-weight: bold;">0</div>
+                    </div>
+                </div>
+            </div>
+
+            \x3C!-- VIRTUAL ENCODERS -->
+            <div class="module-box" style="margin-bottom: 20px;">
+                <h3 class="module-title">Virtual Encoders (Menu Nav)</h3>
+                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px;">
+                    ${[0,1,2].map(e=>`
+                        <div style="text-align: center; padding: 10px; background: var(--bg-input); border-radius: 4px; border: 1px solid var(--border-dim);">
+                            <div style="font-size: 12px; color: var(--text-dim); margin-bottom: 10px;">Encoder ${e} ${e===0?`(Page)`:e===1?`(Param)`:`(Value)`}</div>
+                            <div style="display: flex; gap: 5px; justify-content: center;">
+                                <button class="enc-btn" data-id="${e}" data-delta="-1">◀</button>
+                                <button class="enc-btn push" data-id="${e}" data-btn="true">PUSH</button>
+                                <button class="enc-btn" data-id="${e}" data-delta="1">▶</button>
+                            </div>
+                        </div>
+                    `).join(``)}
+                </div>
+            </div>
+
+            \x3C!-- VIRTUAL POTS (PAGE SPECIFIC) -->
+            <div class="module-box" style="margin-bottom: 20px;">
+                <h3 class="module-title">Page-Specific Pots (Soft Catch-up)</h3>
+                <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px;">
+                    ${[16,17,18,19].map((e,t)=>`
+                        <div>
+                            <label style="font-size: 12px; color: var(--neon-pink);">Pot ${e} (P${t})</label>
+                            <input type="range" class="v-pot" data-id="${e}" min="0" max="1" step="0.001" value="0.5">
+                        </div>
+                    `).join(``)}
+                </div>
+            </div>
+
+            \x3C!-- VIRTUAL POTS (DIRECT) -->
+            <div class="module-box" style="margin-bottom: 20px;">
+                <h3 class="module-title">Direct Pots</h3>
+                <div style="display: grid; grid-template-columns: repeat(8, 1fr); gap: 15px; row-gap: 25px;">
+                    ${[`O1 Vol`,`O2 Vol`,`Noise Vol`,`Noise Color`,`Cutoff`,`Resonance`,`Env Amt`,`Amp A`,`Amp D`,`Amp S`,`Amp R`,`Filt A`,`Filt D`,`Filt S`,`Filt R`,`Master Vol`].map((e,t)=>`
+                        <div style="text-align: center;">
+                            <label style="font-size: 11px; color: var(--text-dim); white-space: nowrap;">${t}: ${e}</label>
+                            <input type="range" class="v-pot" data-id="${t}" min="0" max="1" step="0.001" value="${t===15?`0.8`:`0.5`}">
+                        </div>
+                    `).join(``)}
+                </div>
+            </div>
+
+            \x3C!-- SEQUENCER (Unchanged) -->
+            <div class="module-box" style="margin-bottom: 80px; padding: 0; overflow: hidden; border: 1px solid var(--border-dim);">
+                 <div id="seq-container"></div>
+            </div>
+        </div>
+    `,document.getElementById(`ctrl-midiSource`)?.addEventListener(`change`,t=>{e.sendCommand({type:`midiSource`,val:parseInt(t.target.value,10)})}),document.querySelectorAll(`.enc-btn`).forEach(t=>{t.addEventListener(`click`,t=>{let n=t.currentTarget,r=parseInt(n.getAttribute(`data-id`),10),i=parseInt(n.getAttribute(`data-delta`)||`0`,10),a=n.getAttribute(`data-btn`)===`true`;e.sendCommand({type:`encoder`,id:r,delta:i,btn:a})})}),document.querySelectorAll(`.v-pot`).forEach(t=>{t.addEventListener(`input`,t=>{let n=t.target,r=parseInt(n.getAttribute(`data-id`),10),i=parseFloat(n.value);e.sendCommand({type:`pot`,id:r,val:i})})}),new n(e,`seq-container`)}var i=new t(`synth-hardware.local`),a=document.querySelector(`#app`);if(!a)throw Error(`CRITICAL: Missing <div id='app'></div>`);var o=r(i,a);i.connect();var s=document.getElementById(`tel-menuPage`),c=document.getElementById(`ctrl-midiSource`);function l(){s&&(s.textContent=e.telemetry.menuPage.toString()),c&&document.activeElement!==c&&(c.value=e.telemetry.midiSource.toString()),o&&o.updatePlayhead(e.telemetry.currentStep),requestAnimationFrame(l)}l();</script>
+    <style rel="stylesheet" crossorigin>:root{--bg-deep:#060913;--bg-panel:#0d1220;--bg-input:#04060d;--border-dim:#1e293b;--neon-cyan:#00f0ff;--neon-pink:#ff007f;--neon-green:#0f6;--text-main:#e2e8f0;--text-dim:#64748b}body{background-color:var(--bg-deep);color:var(--text-main);-webkit-font-smoothing:antialiased;margin:0;font-family:Inter,system-ui,sans-serif}.module-box{background:var(--bg-panel);border:1px solid var(--border-dim);border-radius:8px;padding:16px;box-shadow:0 8px 32px #0006}.module-title{text-transform:uppercase;letter-spacing:2px;color:var(--neon-cyan);border-bottom:1px solid var(--border-dim);margin:0 0 12px;padding-bottom:6px;font-size:11px}.readout{color:var(--neon-green);background:var(--bg-input);border:1px solid var(--border-dim);border-radius:4px;padding:4px 8px;font-family:monospace;font-size:14px}select{background:var(--bg-input);color:var(--text-main);border:1px solid var(--border-dim);border-radius:4px;outline:none;width:100%;padding:6px;font-family:monospace}select:focus{border-color:var(--neon-cyan)}input[type=range]{-webkit-appearance:none;background:0 0;width:100%;margin:10px 0}input[type=range]:focus{outline:none}input[type=range]::-webkit-slider-runnable-track{cursor:pointer;background:var(--bg-input);border:1px solid var(--border-dim);border-radius:2px;width:100%;height:4px}input[type=range]::-webkit-slider-thumb{background:var(--neon-cyan);cursor:pointer;-webkit-appearance:none;width:8px;height:16px;box-shadow:0 0 8px var(--neon-cyan);border-radius:2px;margin-top:-7px}input[type=range]:focus::-webkit-slider-thumb{background:var(--neon-pink);box-shadow:0 0 8px var(--neon-pink)}.matrix-input{background:var(--bg-input);border:1px solid var(--border-dim);width:100%;color:var(--text-dim);text-align:center;border-radius:4px;outline:none;padding:8px 4px;font-family:monospace;transition:all .2s}.matrix-input:focus{border-color:var(--neon-cyan);color:var(--neon-cyan);box-shadow:0 0 10px #00f0ff33}::-webkit-scrollbar{width:10px;height:10px}::-webkit-scrollbar-track{background:var(--bg-deep)}::-webkit-scrollbar-thumb{background:var(--border-dim);border-radius:5px}::-webkit-scrollbar-thumb:hover{background:var(--neon-cyan)}.enc-btn{background:var(--bg-deep);color:var(--neon-cyan);border:1px solid var(--border-dim);cursor:pointer;border-radius:4px;padding:6px 12px;font-family:monospace;font-weight:700;transition:all .1s}.enc-btn:hover{border-color:var(--neon-cyan);background:#00f0ff1a}.enc-btn:active{transform:scale(.95)}.enc-btn.push{color:var(--text-main);border-color:var(--text-dim)}.enc-btn.push:hover{border-color:var(--text-main);background:#ffffff1a}
+/*$vite$:1*/</style>
+  </head>
+  <body>
+    <div id="app"></div>
+  </body>
+</html>

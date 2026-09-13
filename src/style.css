@@ -118,3 +118,20 @@ input[type=range]:focus::-webkit-slider-thumb {
 ::-webkit-scrollbar-track { background: var(--bg-deep); }
 ::-webkit-scrollbar-thumb { background: var(--border-dim); border-radius: 5px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--neon-cyan); }
+
+/* Virtual Encoder Buttons */
+.enc-btn {
+  background: var(--bg-deep);
+  color: var(--neon-cyan);
+  border: 1px solid var(--border-dim);
+  padding: 6px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: monospace;
+  font-weight: bold;
+  transition: 0.1s;
+}
+.enc-btn:hover { background: rgba(0, 240, 255, 0.1); border-color: var(--neon-cyan); }
+.enc-btn:active { transform: scale(0.95); }
+.enc-btn.push { color: var(--text-main); border-color: var(--text-dim); }
+.enc-btn.push:hover { background: rgba(255, 255, 255, 0.1); border-color: var(--text-main); }
